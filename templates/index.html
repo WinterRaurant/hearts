@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hearts Game</title>
+    <script>
+        let playerId = "";
+        let roomId = "";
+        let ws;
+        let hand = [];
+        const API_BASE = "http://localhost:8000"; 
+        // const API_BASE = "http://10.192.222.225:8000";  
+
+        async function createRoom() {
+            playerId = document.getElementById("player_id").value;
+            if (!playerId) {
+                alert("请输入玩家ID");
+                return;
+            }
+            
+            let response = await fetch(`${API_BASE}/create_room?player_id=${playerId}`, { method: "POST" });
+            let data = await response.json();
+            if (!data.room_id) {
+                alert("创建房间失败");
+                return;
+            }
+
+            roomId = data.room_id;
+            document.getElementById("room_info").innerText = `房间ID: ${roomId}`;
+            console.log("创建房间成功，房间ID:", roomId);
+            joinRoom();  // 确保用户自动加入房间
+        }
+
+        async function joinRoom() {
+            if (!roomId) {
+                roomId = document.getElementById("room_id").value;
+            }
+            playerId = document.getElementById("player_id").value;
+            if (!playerId || !roomId) {
+                alert("请输入房间ID和玩家ID");
+                return;
+            }
+            
+            let response = await fetch(`${API_BASE}/join_room/${roomId}?player_id=${playerId}`, { method: "POST" });
+            let data = await response.json();
+            if (data.error) {
+                alert(data.error);
+                return;
+            }
+            document.getElementById("game_area").style.display = "block";
+            document.getElementById("setup").style.display = "none";
+            if (data.hands) {
+                hand = data.hands[playerId];
+                renderHand();
+            }
+            connectWebSocket();
+        }
+
+        function connectWebSocket() {
+            ws = new WebSocket(`${API_BASE}/ws/${roomId}/${playerId}`);
+            
+            ws.onmessage = function(event) {
+                let data = JSON.parse(event.data);
+                updateChatBox(data);
+                if (data.message === "Game started") {
+                    console.log("游戏开始，收到手牌:", data.hand);
+                    hand = data.hand;
+                    renderHand();
+
+                    if (data.first_player) {
+                        console.log("第一轮先手:", data.first_player);
+                        if (data.first_player === playerId) {
+                            // alert("你是第一轮的先手，请出牌！");
+                            
+                        }
+                    }
+                } else if (data.message === "Card played") {
+                    if (data.error) {
+                        alert(data.error);
+                        return;
+                    }
+                    if (data.player === playerId) {
+                        hand = hand.filter(c => !(c.rank === data.card.rank && c.suit === data.card.suit));
+                        renderHand();
+                    }
+                } 
+            };
+        }
+
+        function updateChatBox(data) {
+            let chatBox = document.getElementById("chat_box");
+            chatBox.innerHTML = ""; // 只显示一条消息
+            let messageElement = document.createElement("p");
+            messageElement.textContent = data.message || data.error || "未知消息";
+            
+            if (data.error) {
+                messageElement.style.color = "red";
+            } else {
+                messageElement.style.color = "black";
+            }
+
+            if (data.message === "Game started") {
+                messageElement.textContent += ", the first player is ";
+                if (data.first_player == playerId) {
+                    messageElement.textContent += "you";
+                } else {
+                    messageElement.textContent += data.first_player;
+                }
+            } else if (data.message === "Game over") {
+                messageElement.textContent += ", the winner is " + data.winner;
+            }
+            
+            chatBox.appendChild(messageElement);
+        }
+
+        function renderHand() {
+            let handDiv = document.getElementById("hand");
+            handDiv.innerHTML = "";
+            
+            hand.forEach(card => {
+                let btn = document.createElement("button");
+                btn.innerText = `${card.rank} of ${card.suit}`;
+                btn.onclick = () => playCard(card);
+                handDiv.appendChild(btn);
+            });
+        }
+
+        function playCard(card) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                alert("WebSocket 未连接，无法出牌");
+                return;
+            }
+
+            ws.send(JSON.stringify({ action: "play_card", card: card }));
+        }
+    </script>
+    <style>
+        #chat_box {
+            width: 300px;
+            height: 50px;
+            border: 1px solid black;
+            padding: 5px;
+            background-color: #f9f9f9;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="setup">
+        <h2>Hearts Game</h2>
+        <label for="player_id">玩家ID:</label>
+        <input type="text" id="player_id">
+        <br><br>
+        <button onclick="createRoom()">创建房间</button>
+        <br><br>
+        <label for="room_id">房间ID:</label>
+        <input type="text" id="room_id">
+        <button onclick="joinRoom()">加入房间</button>
+        <p id="room_info"></p>
+    </div>
+    
+    <div id="game_area" style="display:none;">
+        <h2>游戏进行中</h2>
+        <div id="hand"></div>
+        <div id="chat_box"></div>
+    </div>
+</body>
+</html>
