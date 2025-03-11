@@ -84,9 +84,13 @@ class GameRoom:
     
     async def deal_cards(self):
         """ 仅在游戏开始时调用一次，发 13 张牌 """
+        random.shuffle(self.deck)
+        num_players = len(self.players)
         for i, player in enumerate(self.players):
-            self.hands[player] = self.deck[i * 13:(i + 1) * 13]
-            players[player].hand = self.hands[player]  # 更新玩家手牌
+            self.hands[player] = sorted(
+                self.deck[i::num_players],
+                key=lambda card: ({"♠️": 0, "❤️": 1, "♣️": 2, "♦️": 3}[card["suit"]], card["rank"])
+            )
 
         # 设定第一轮的先手玩家（持有♣️2）
         for player in self.players:
@@ -232,8 +236,11 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, player_id: str)
             data = await websocket.receive_json()
             if data["action"] == "play_card":
                 response = room.play_card(player_id, data["card"])
-                for p in room.players:
-                    await players[p].send_message(response)
+                if "error" not in response:
+                    for p in room.players:
+                        await players[p].send_message(response)
+                else:
+                    await players[player_id].send_message(response)
     except WebSocketDisconnect:
         room.players.remove(player_id)
         del players[player_id]

@@ -30,6 +30,7 @@
             document.getElementById("room_info").innerText = `房间ID: ${roomId}`;
             console.log("创建房间成功，房间ID:", roomId);
             joinRoom();  // 确保用户自动加入房间
+            updateChatBoxWithText(`the rooomId is ${roomId}`)
         }
 
         async function joinRoom() {
@@ -88,31 +89,54 @@
             };
         }
 
+        // 更新整个提示信息
         function updateChatBox(data) {
             let chatBox = document.getElementById("chat_box");
             chatBox.innerHTML = ""; // 只显示一条消息
             let messageElement = document.createElement("p");
-            messageElement.textContent = data.message || data.error || "未知消息";
+            // messageElement.textContent = data.message || data.error || "未知消息";
             
             if (data.error) {
                 messageElement.style.color = "red";
+                messageElement.textContent = data.error;
             } else {
                 messageElement.style.color = "black";
             }
 
             if (data.message === "Game started") {
-                messageElement.textContent += ", the first player is ";
+                messageElement.textContent = "Game started, the first player is ";
                 if (data.first_player == playerId) {
                     messageElement.textContent += "you";
                 } else {
                     messageElement.textContent += data.first_player;
                 }
             } else if (data.message === "Game over") {
-                messageElement.textContent += ", the winner is " + data.winner;
+                messageElement.textContent = "Game over, the winner is " + data.winner;
+            } else if (data.message === "Card played") {
+                messageElement.textContent += `${data.player} played ${data.card.suit}${data.card.rank}, the next is ${data.next_player}`;
             }
             
             chatBox.appendChild(messageElement);
         }
+
+        // 更新整个提示信息，输入是字符串
+        function updateChatBoxWithText(str) {
+            let chatBox = document.getElementById("chat_box");
+            chatBox.innerHTML = ""; // 只显示一条消息
+            let messageElement = document.createElement("p");
+            messageElement.textContent = str;
+
+            chatBox.appendChild(messageElement);
+        }
+
+        // 往提示信息后加一行
+        function appendChatBoxWithText(str) {
+            let chatBox = document.getElementById("chat_box");
+            let messageElement = document.createElement("p");
+            messageElement.textContent = str;
+
+            chatBox.appendChild(messageElement);
+        }       
 
         function renderHand() {
             let handDiv = document.getElementById("hand");
@@ -120,7 +144,7 @@
             
             hand.forEach(card => {
                 let btn = document.createElement("button");
-                btn.innerText = `${card.rank} of ${card.suit}`;
+                btn.innerText = `${card.suit} ${card.rank}`;
                 btn.onclick = () => playCard(card);
                 handDiv.appendChild(btn);
             });
