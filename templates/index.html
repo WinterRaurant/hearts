@@ -64,17 +64,20 @@
             ws.onmessage = function(event) {
                 let data = JSON.parse(event.data);
                 updateChatBox(data);
+                
                 if (data.message === "Game started") {
                     console.log("游戏开始，收到手牌:", data.hand);
                     hand = data.hand;
                     renderHand();
 
-                    if (data.first_player) {
-                        console.log("第一轮先手:", data.first_player);
-                        if (data.first_player === playerId) {
-                            // alert("你是第一轮的先手，请出牌！");
-                            
-                        }
+                    // 显示记分板，并初始化
+                    if (data.scores) {
+                        updateScoreboard(data.scores);
+                        document.getElementById("scoreboard").style.display = "block";
+                    }
+
+                    if (data.first_player && data.first_player === playerId) {
+                        console.log("你是第一轮的先手，请出牌！");
                     }
                 } else if (data.message === "Card played") {
                     if (data.error) {
@@ -85,8 +88,31 @@
                         hand = hand.filter(c => !(c.rank === data.card.rank && c.suit === data.card.suit));
                         renderHand();
                     }
-                } 
+
+                    // 更新记分板
+                    if (data.scores) {
+                        updateScoreboard(data.scores);
+                    }
+                }
             };
+
+            // 更新记分板的函数
+            function updateScoreboard(scores) {
+                const table = document.getElementById("score_table");
+                table.innerHTML = `
+                    <tr>
+                        <th>玩家</th>
+                        <th>得分</th>
+                    </tr>
+                `;
+                Object.entries(scores).forEach(([id, score]) => {
+                    let row = table.insertRow();
+                    let cell1 = row.insertCell(0);
+                    let cell2 = row.insertCell(1);
+                    cell1.textContent = id;
+                    cell2.textContent = score;
+                });
+            }
         }
 
         // 更新整个提示信息
@@ -192,6 +218,15 @@
         <h2>游戏进行中</h2>
         <div id="hand"></div>
         <div id="chat_box"></div>
+        <div id="scoreboard" style="display:none;">
+            <h3>记分板</h3>
+            <table border="1" id="score_table">
+                <tr>
+                    <th>玩家</th>
+                    <th>得分</th>
+                </tr>
+            </table>
+        </div>
     </div>
 </body>
 </html>

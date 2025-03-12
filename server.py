@@ -34,7 +34,7 @@ class GameRoom:
     def __init__(self, room_id):
         self.room_id = room_id
         self.players = []
-        self.deck = self.generate_deck()
+        self.deck = []
         self.hands = {}
         self.current_turn = 0
         self.scores = {}
@@ -84,7 +84,7 @@ class GameRoom:
     
     async def deal_cards(self):
         """ 仅在游戏开始时调用一次，发 13 张牌 """
-        random.shuffle(self.deck)
+        self.deck = self.generate_deck()
         num_players = len(self.players)
         for i, player in enumerate(self.players):
             self.hands[player] = sorted(
@@ -98,6 +98,9 @@ class GameRoom:
                 self.current_turn = self.players.index(player)
                 break
 
+        self.trick = []
+        self.trick_suit = None
+        self.hearts_broken = False
         self.game_started = True
 
         # 发送手牌给所有玩家
@@ -105,7 +108,8 @@ class GameRoom:
             await players[player].send_message({
                 "message": f"Game started",
                 "hand": self.hands[player],
-                "first_player": self.players[self.current_turn]
+                "first_player": self.players[self.current_turn],
+                "scores": self.scores
             })
 
 
@@ -136,7 +140,8 @@ class GameRoom:
             "message": "Card played",
             "player": player_id,
             "card": card,
-            "next_player": self.players[self.current_turn]
+            "next_player": self.players[self.current_turn],
+            "scores": self.scores
         }
     
     def resolve_trick(self):
@@ -158,7 +163,29 @@ class GameRoom:
 
         # **检测游戏是否结束**
         if all(len(self.hands[player]) == 0 for player in self.players):
-            self.end_game()
+            asyncio.create_task(self.end_round())
+
+    async def end_round(self):
+        score_changes = {p: self.scores[p] for p in self.players}
+        for player in self.players:
+            await players[player].send_message({
+                "message": "Round ended",
+                "score_changes": score_changes,
+                "total_scores": self.scores
+            })
+        if max(self.scores.values()) >= 50:
+            await self.reset_game()
+        else:
+            await self.deal_cards()
+
+    async def reset_game(self):
+        for player in self.players:
+            await players[player].send_message({
+                "message": "Game over, scores reset",
+                "final_scores": self.scores
+            })
+        self.scores = {p: 0 for p in self.players}
+        await self.deal_cards()
 
     def end_game(self):
         """ 游戏结束，计算最终得分并广播 """
@@ -195,17 +222,20 @@ async def join_room(room_id: str, player_id: str):
         return {"error": "Player already in room"}
     
     room.players.append(player_id)
-    room.scores[player_id] = 0
-    
-    #确保players[player_id]被正确初始化
+
+    # 仅在第一次加入时初始化得分，防止重复设置为0
+    if player_id not in room.scores:
+        room.scores[player_id] = 0  
+
     if player_id not in players:
-        players[player_id]=Player(player_id, None)#先创建player 对象，WebSocket 连接时再更新
+        players[player_id] = Player(player_id, None)
+
+    return {"message": "Joined room", "players": room.players}
 
     # if len(room.players) == 4:
     #     print('now deal!')
     #     await room.deal_cards()
     
-    return {"message": "Joined room", "players": room.players}
 
 @app.websocket("/ws/{room_id}/{player_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, player_id: str):
