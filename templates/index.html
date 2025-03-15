@@ -9,8 +9,61 @@
         let roomId = "";
         let ws;
         let hand = [];
+        let passSelectedCards = [];
         const API_BASE = "http://localhost:8000"; 
         // const API_BASE = "http://10.192.222.225:8000";  
+
+
+        function togglePassSelect(card, btn) {
+            const index = passSelectedCards.findIndex(c => c.rank === card.rank && c.suit === card.suit);
+            if (index >= 0) {
+                passSelectedCards.splice(index, 1);
+                btn.style.backgroundColor = "";
+            } else {
+                if (passSelectedCards.length >= 3) {
+                    alert("最多只能选择三张牌！");
+                    return;
+                }
+                passSelectedCards.push(card);
+                btn.style.backgroundColor = "yellow";
+            }
+        }
+
+        function renderPassHand() {
+            document.getElementById("pass_area").style.display = "block";
+            document.getElementById("hand").style.display = "none";
+            let passDiv = document.getElementById("pass_cards");
+            passDiv.innerHTML = "";
+            hand.forEach(card => {
+                let btn = document.createElement("button");
+                btn.innerText = `${card.suit} ${card.rank}`;
+                btn.onclick = () => togglePassSelect(card, btn);
+                passDiv.appendChild(btn);
+            });
+        }
+
+        function confirmPassCards() {
+            if (passSelectedCards.length !== 3) {
+                alert("必须选择三张牌进行传递！");
+                return;
+            }
+            ws.send(JSON.stringify({ action: "pass_cards", cards: passSelectedCards }));
+            // 从手牌中移除传递出去的牌
+            // passSelectedCards.forEach(selectedCard => {
+            //     hand = hand.filter(c => !(c.rank === selectedCard.rank && c.suit === selectedCard.suit));
+            // });
+
+            // // 清空传递牌选区，隐藏传牌选择区
+            // passSelectedCards = [];
+            // document.getElementById("pass_area").style.display = "none";
+
+            // 重新渲染手牌（移除传递的牌）
+            // renderHand();
+            document.getElementById("pass_area").style.display = "none";
+            document.getElementById("hand").style.display = "block";
+            passSelectedCards = [];
+        }
+
 
         async function createRoom() {
             playerId = document.getElementById("player_id").value;
@@ -18,8 +71,21 @@
                 alert("请输入玩家ID");
                 return;
             }
-            
-            let response = await fetch(`${API_BASE}/create_room?player_id=${playerId}`, { method: "POST" });
+
+            const rules = {
+                rule1: document.getElementById("rule1").checked,
+                rule2: document.getElementById("rule2").checked,
+                rule3: document.getElementById("rule3").checked,
+                rule4: document.getElementById("rule4").checked,
+                rule5: document.getElementById("rule5").checked,
+            };
+
+            let response = await fetch(`${API_BASE}/create_room?player_id=${playerId}`, { 
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ rules })
+            });
+
             let data = await response.json();
             if (!data.room_id) {
                 alert("创建房间失败");
@@ -28,9 +94,8 @@
 
             roomId = data.room_id;
             document.getElementById("room_info").innerText = `房间ID: ${roomId}`;
-            console.log("创建房间成功，房间ID:", roomId);
-            joinRoom();  // 确保用户自动加入房间
-            updateChatBoxWithText(`the rooomId is ${roomId}`)
+            joinRoom();
+            updateChatBoxWithText(`房间ID: ${roomId}`);
         }
 
         async function joinRoom() {
@@ -76,9 +141,6 @@
                         document.getElementById("scoreboard").style.display = "block";
                     }
 
-                    if (data.first_player && data.first_player === playerId) {
-                        console.log("你是第一轮的先手，请出牌！");
-                    }
                 } else if (data.message === "Card played") {
                     if (data.error) {
                         alert(data.error);
@@ -91,8 +153,18 @@
 
                     // 更新记分板
                     if (data.scores) {
-                        updateScoreboard(data.scores);
+                       updateScoreboard(data.scores);
                     }
+
+                } else if (data.message === "Pass cards") {
+                    hand = data.hand;
+                    renderHand();
+                    renderPassHand();
+                    updateChatBoxWithText("Please pass 3 cards")
+                } else if (data.message === "wait for others") {
+                    hand = data.hand;
+                    renderHand();
+                    updateChatBoxWithText("wait for others passing")
                 }
             };
 
@@ -130,7 +202,11 @@
             }
 
             if (data.message === "Game started") {
-                messageElement.textContent = "Game started, the first player is ";
+                if (data.get_cards) {
+                    messageElement.textContent = `Received ${data.get_cards[0].suit}${data.get_cards[0].rank}, ${data.get_cards[1].suit}${data.get_cards[1].rank}, ${data.get_cards[2].suit}${data.get_cards[2].rank}, the first player is `
+                } else {
+                    messageElement.textContent = "Game started, the first player is ";
+                }
                 if (data.first_player == playerId) {
                     messageElement.textContent += "you";
                 } else {
@@ -206,6 +282,12 @@
         <label for="player_id">玩家ID:</label>
         <input type="text" id="player_id">
         <br><br>
+        <h3>选择游戏规则：</h3>
+        <input type="checkbox" id="rule1" checked> text1（♣️10翻倍）<br>
+        <input type="checkbox" id="rule2" checked> text2（♦️11得分-13）<br>
+        <input type="checkbox" id="rule3"> text3（♥️全+♠️12 特殊计分）<br>
+        <input type="checkbox" id="rule4"> text4（♥️牌特殊分值）<br>
+        <input type="checkbox" id="rule5" checked> text5（开启传牌）<br><br>
         <button onclick="createRoom()">创建房间</button>
         <br><br>
         <label for="room_id">房间ID:</label>
@@ -217,6 +299,11 @@
     <div id="game_area" style="display:none;">
         <h2>游戏进行中</h2>
         <div id="hand"></div>
+        <div id="pass_area" style="display:none;">
+            <h3>选择传递的三张手牌:</h3>
+            <div id="pass_cards"></div>
+            <button onclick="confirmPassCards()">确认传牌</button>
+        </div>
         <div id="chat_box"></div>
         <div id="scoreboard" style="display:none;">
             <h3>记分板</h3>

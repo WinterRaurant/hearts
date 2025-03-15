@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 import random
 import string
@@ -24,20 +24,28 @@ class Player:
     def __init__(self, player_id, websocket: WebSocket = None):
         self.player_id = player_id
         self.websocket = websocket
+        self.double = 1
         self.hand = []
+        self.pass_cards = []
 
     async def send_message(self, message):
         if self.websocket:  # 确保 WebSocket 连接存在
             await self.websocket.send_json(message)
 
 class GameRoom:
-    def __init__(self, room_id):
+    def __init__(self, room_id, rules):
         self.room_id = room_id
         self.players = []
         self.deck = []
         self.hands = {}
-        self.current_turn = 0
-        self.scores = {}
+        self.rules = rules
+        self.counter = 0 
+        self.enable_pass_cards = rules.get('rule5')
+        self.finish_pass = {}
+        self.started = False
+        self.current_turn = 0 # 轮到谁了
+        self.total_scores = {}
+        self.round_scores = {}
         self.trick = []  # 当前回合的牌
         self.trick_suit = None  # 当前回合的花色
         self.game_started = False
@@ -45,6 +53,8 @@ class GameRoom:
 
     def validate_play(self, player_id, card):
         """ 检查玩家的出牌是否合法 """
+        if self.counter % 4 != 0 and self.enable_pass_cards and not self.started:
+            return {"error": "Wait for others passing"}
 
         if player_id != self.players[self.current_turn]:
             return {"error": "Not your turn"}
@@ -82,15 +92,59 @@ class GameRoom:
         random.shuffle(deck)
         return deck
     
+    async def start_game(self):
+        self.started = True
+        get_cards = {}
+
+        for idx, pid in enumerate(self.players):
+            if self.counter % 4 == 1:
+                reveiver_idx = (idx + 1) % 4
+            elif self.counter % 4 == 2:
+                reveiver_idx = (idx + 2) % 4
+            elif self.counter % 4 == 3:
+                reveiver_idx = (idx + 3) % 4
+            reveiver_id = self.players[reveiver_idx]
+            player_id = self.players[idx]
+            print(f'{player_id} passed {players[player_id].pass_cards} to {reveiver_id}')
+            for card in players[player_id].pass_cards:
+                self.hands[reveiver_id].append(card)
+                print(f'{reveiver_id} get {card} from {player_id}')
+            get_cards[reveiver_id] = players[player_id].pass_cards
+            players[player_id].pass_cards = []
+
+        print(get_cards)
+
+        for i, player in enumerate(self.players):
+            self.hands[player] = sorted(
+                self.hands[player],
+                key=lambda card: ({"♠️": 0, "❤️": 1, "♣️": 2, "♦️": 3}[card["suit"]], card["rank"])
+        )
+
+
+        for player in self.players:
+            await players[player].send_message({
+                "message": f"Game started",
+                "hand": self.hands[player], # 要修改成加上收到的牌以后的
+                "first_player": self.players[self.current_turn],
+                "get_cards": get_cards[player],
+                "scores": self.total_scores
+            })
+    
     async def deal_cards(self):
         """ 仅在游戏开始时调用一次，发 13 张牌 """
         self.deck = self.generate_deck()
-        num_players = len(self.players)
+        self.counter += 1
+        self.started = False
         for i, player in enumerate(self.players):
             self.hands[player] = sorted(
-                self.deck[i::num_players],
+                self.deck[i::4],
                 key=lambda card: ({"♠️": 0, "❤️": 1, "♣️": 2, "♦️": 3}[card["suit"]], card["rank"])
             )
+
+        # 开始新一局，本局分数清零
+        for player_id in self.players:
+            self.round_scores[player_id] = 0  
+            players[player_id].double = 1
 
         # 设定第一轮的先手玩家（持有♣️2）
         for player in self.players:
@@ -105,17 +159,35 @@ class GameRoom:
 
         # 发送手牌给所有玩家
         for player in self.players:
-            await players[player].send_message({
-                "message": f"Game started",
-                "hand": self.hands[player],
-                "first_player": self.players[self.current_turn],
-                "scores": self.scores
-            })
+            if self.enable_pass_cards and self.counter % 4 != 0: # 要传牌
+                await players[player].send_message({
+                    "message": f"Pass cards",
+                    "hand": self.hands[player],
+                })               
+            else:
+                await players[player].send_message({
+                    "message": f"Game started",
+                    "hand": self.hands[player],
+                    "first_player": self.players[self.current_turn],
+                    "scores": self.total_scores
+                })
 
 
     def get_next_player(self):
         self.current_turn = (self.current_turn + 1) % 4
         return self.players[self.current_turn]
+    
+    async def pass_card(self, player_id, cards):
+        self.finish_pass[player_id] = cards
+        for c in cards:
+            self.hands[player_id].remove(c)
+            players[player_id].pass_cards.append(c)
+        await players[player_id].send_message({
+            "message": "wait for others",
+            "hand": self.hands[player_id]
+        })
+        return len(self.finish_pass)
+
     
     def play_card(self, player_id, card):
         error = self.validate_play(player_id, card)
@@ -141,7 +213,7 @@ class GameRoom:
             "player": player_id,
             "card": card,
             "next_player": self.players[self.current_turn],
-            "scores": self.scores
+            "scores": self.round_scores
         }
     
     def resolve_trick(self):
@@ -153,10 +225,16 @@ class GameRoom:
         winner = highest_card[0]
         self.current_turn = self.players.index(winner)  # 设置下一轮先手玩家
 
+        points = 0
+        if self.rules.get('rule1'):
+            players[winner].double = 2 if any(card["suit"] == "♣️" and card["rank"] == 10 for _, card in self.trick) or players[winner].double == 2 else 1
+        if self.rules.get('rule2'):
+            points -= 13 if any(card["suit"] == "♦️" and card["rank"] == 11 for _, card in self.trick) else 0
+
         # 计算得分
-        points = sum(1 for _, card in self.trick if card["suit"] == "❤️")
+        points += sum(1 for _, card in self.trick if card["suit"] == "❤️")
         points += 13 if any(card["suit"] == "♠️" and card["rank"] == 12 for _, card in self.trick) else 0
-        self.scores[winner] += points
+        self.round_scores[winner] += points * players[winner].double
 
         self.trick = []
         self.trick_suit = None
@@ -166,14 +244,14 @@ class GameRoom:
             asyncio.create_task(self.end_round())
 
     async def end_round(self):
-        score_changes = {p: self.scores[p] for p in self.players}
+        self.total_scores = {p: self.total_scores[p] + self.round_scores[p] for p in self.players}
         for player in self.players:
             await players[player].send_message({
                 "message": "Round ended",
-                "score_changes": score_changes,
-                "total_scores": self.scores
+                "total_scores": self.total_scores,
+                "round_scores": self.round_scores
             })
-        if max(self.scores.values()) >= 50:
+        if max(self.total_scores.values()) >= 50:
             await self.reset_game()
         else:
             await self.deal_cards()
@@ -182,34 +260,43 @@ class GameRoom:
         for player in self.players:
             await players[player].send_message({
                 "message": "Game over, scores reset",
-                "final_scores": self.scores
+                "final_scores": self.total_scores
             })
-        self.scores = {p: 0 for p in self.players}
+        self.total_scores = {p: 0 for p in self.players}
+        self.round_scores = {p: 0 for p in self.players}
         await self.deal_cards()
 
     def end_game(self):
         """ 游戏结束，计算最终得分并广播 """
-        result = sorted(self.scores.items(), key=lambda x: x[1])  # 按得分排序
+        result = sorted(self.total_scores.items(), key=lambda x: x[1])  # 按得分排序
         winner = result[0][0]  # 得分最低者获胜
 
         # 向所有玩家发送最终得分
         for player in self.players:
             asyncio.create_task(players[player].send_message({
                 "message": "Game over",
-                "scores": self.scores,
+                "scores": self.total_scores,
                 "winner": winner
             }))
 
         # 移除房间
         del rooms[self.room_id]
 
+def create_game_room(creator_id, rules):
+    room_id = '1111' # ''.join(random.choices(string.digits, k=4))
+    # while room_id in rooms:
+    #     room_id = ''.join(random.choices(string.digits, k=4))
+    rooms[room_id] = GameRoom(room_id, rules)
+    return room_id
+
 @app.post("/create_room")
-async def create_room():
-    room_id = ''.join(random.choices(string.digits, k=4))
-    while room_id in rooms:
-        room_id = ''.join(random.choices(string.digits, k=4))
-    rooms[room_id] = GameRoom(room_id)
+async def create_room(request: Request, player_id: str):
+    data = await request.json()
+    rules = data.get("rules", {})
+    # 创建房间时保存这些规则
+    room_id = create_game_room(player_id, rules)
     return {"room_id": room_id}
+
 
 @app.post("/join_room/{room_id}")
 async def join_room(room_id: str, player_id: str):
@@ -221,21 +308,13 @@ async def join_room(room_id: str, player_id: str):
     if player_id in room.players:
         return {"error": "Player already in room"}
     
-    room.players.append(player_id)
-
-    # 仅在第一次加入时初始化得分，防止重复设置为0
-    if player_id not in room.scores:
-        room.scores[player_id] = 0  
+    room.players.append(player_id) 
 
     if player_id not in players:
         players[player_id] = Player(player_id, None)
 
     return {"message": "Joined room", "players": room.players}
 
-    # if len(room.players) == 4:
-    #     print('now deal!')
-    #     await room.deal_cards()
-    
 
 @app.websocket("/ws/{room_id}/{player_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, player_id: str):
@@ -256,10 +335,8 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, player_id: str)
 
     # 检查是否所有玩家都已连接
     if len(room.players) == 4 and all(players[p].websocket is not None for p in room.players):
+        room.total_scores = {p : 0 for p in room.players}
         await room.deal_cards()
-        # # 发送手牌给所有玩家
-        # for p in room.players:
-        #     await players[p].send_message({"message": "Game started", "hand": hands[p]})
 
     try:
         while True:
@@ -271,6 +348,9 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, player_id: str)
                         await players[p].send_message(response)
                 else:
                     await players[player_id].send_message(response)
+            if data["action"] == "pass_cards":
+                if await room.pass_card(player_id, data['cards']) == 4:
+                    await room.start_game()
     except WebSocketDisconnect:
         room.players.remove(player_id)
         del players[player_id]
