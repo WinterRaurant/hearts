@@ -140,7 +140,6 @@
                         updateScoreboard(data.scores);
                         document.getElementById("scoreboard").style.display = "block";
                     }
-
                 } else if (data.message === "Card played") {
                     if (data.error) {
                         alert(data.error);
@@ -150,12 +149,10 @@
                         hand = hand.filter(c => !(c.rank === data.card.rank && c.suit === data.card.suit));
                         renderHand();
                     }
-
                     // 更新记分板
                     if (data.scores) {
                        updateScoreboard(data.scores);
                     }
-
                 } else if (data.message === "Pass cards") {
                     hand = data.hand;
                     renderHand();
@@ -165,6 +162,8 @@
                     hand = data.hand;
                     renderHand();
                     updateChatBoxWithText("wait for others passing")
+                } else if (data.message && data.message.includes("Round ended")) {
+                    console.log('111111');
                 }
             };
 
@@ -283,17 +282,18 @@
         <input type="text" id="player_id">
         <br><br>
         <h3>选择游戏规则：</h3>
-        <input type="checkbox" id="rule1" checked> text1（♣️10翻倍）<br>
-        <input type="checkbox" id="rule2" checked> text2（♦️11得分-13）<br>
-        <input type="checkbox" id="rule3"> text3（♥️全+♠️12 特殊计分）<br>
-        <input type="checkbox" id="rule4"> text4（♥️牌特殊分值）<br>
-        <input type="checkbox" id="rule5" checked> text5（开启传牌）<br><br>
+        <input type="checkbox" id="rule1" checked> rule1（♣️10翻倍）<br>
+        <input type="checkbox" id="rule2" checked> rule2（♦️11得分-13）<br>
+        <input type="checkbox" id="rule3" checked> rule3（全♥️）<br>
+        <input type="checkbox" id="rule4" checked> rule4（全♥️+♠️Q）<br>
+        <input type="checkbox" id="rule5" checked> rule5（开启传牌）<br><br>
         <button onclick="createRoom()">创建房间</button>
         <br><br>
         <label for="room_id">房间ID:</label>
         <input type="text" id="room_id">
         <button onclick="joinRoom()">加入房间</button>
-        <p id="room_info"></p>
+        <p id="room_info">
+        </p>
     </div>
     
     <div id="game_area" style="display:none;">

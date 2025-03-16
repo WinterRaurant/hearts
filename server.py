@@ -25,6 +25,7 @@ class Player:
         self.player_id = player_id
         self.websocket = websocket
         self.double = 1
+        self.get_scores = []  # 收到的分牌
         self.hand = []
         self.pass_cards = []
 
@@ -38,9 +39,13 @@ class GameRoom:
         self.players = []
         self.deck = []
         self.hands = {}
-        self.rules = rules
+        # self.rules = rules
         self.counter = 0 
         self.enable_pass_cards = rules.get('rule5')
+        self.enable_moon = rules.get('rule4')
+        self.enable_red = rules.get('rule3')
+        self.enable_J = rules.get('rule2')
+        self.enable_10 = rules.get('rule1')
         self.finish_pass = {}
         self.started = False
         self.current_turn = 0 # 轮到谁了
@@ -70,8 +75,8 @@ class GameRoom:
         # 如果是本轮的第一张牌
         if len(self.trick) == 0:
             # 如果♥️未被破坏，不能率先出♥️，除非玩家只有♥️
-            if card["suit"] == "❤️" and not self.hearts_broken:
-                if any(c["suit"] != "❤️" for c in self.hands[player_id]):
+            if card["suit"] == "♥️" and not self.hearts_broken:
+                if any(c["suit"] != "♥️" for c in self.hands[player_id]):
                     return {"error": "You cannot lead with hearts until it is broken"}
 
             self.trick_suit = card["suit"]
@@ -86,7 +91,7 @@ class GameRoom:
     
     def generate_deck(self):
         # suits = ['hearts', 'diamonds', 'clubs', 'spades']
-        suits = ['❤️', '♦️', '♣️', '♠️']
+        suits = ['♥️', '♦️', '♣️', '♠️']
         ranks = list(range(2, 15))  # 2-10, 11(J), 12(Q), 13(K), 14(A)
         deck = [{'suit': suit, 'rank': rank} for suit in suits for rank in ranks]
         random.shuffle(deck)
@@ -112,12 +117,10 @@ class GameRoom:
             get_cards[reveiver_id] = players[player_id].pass_cards
             players[player_id].pass_cards = []
 
-        print(get_cards)
-
         for i, player in enumerate(self.players):
             self.hands[player] = sorted(
                 self.hands[player],
-                key=lambda card: ({"♠️": 0, "❤️": 1, "♣️": 2, "♦️": 3}[card["suit"]], card["rank"])
+                key=lambda card: ({"♠️": 0, "♥️": 1, "♣️": 2, "♦️": 3}[card["suit"]], card["rank"])
         )
 
 
@@ -138,13 +141,14 @@ class GameRoom:
         for i, player in enumerate(self.players):
             self.hands[player] = sorted(
                 self.deck[i::4],
-                key=lambda card: ({"♠️": 0, "❤️": 1, "♣️": 2, "♦️": 3}[card["suit"]], card["rank"])
+                key=lambda card: ({"♠️": 0, "♥️": 1, "♣️": 2, "♦️": 3}[card["suit"]], card["rank"])
             )
 
         # 开始新一局，本局分数清零
         for player_id in self.players:
             self.round_scores[player_id] = 0  
             players[player_id].double = 1
+            players[player_id].get_scores = []
 
         # 设定第一轮的先手玩家（持有♣️2）
         for player in self.players:
@@ -199,7 +203,7 @@ class GameRoom:
         self.trick.append((player_id, card))
 
         # 记录♥️是否被打出
-        if card["suit"] == "❤️":
+        if card["suit"] == "♥️":
             self.hearts_broken = True
 
         # 本轮结束，处理赢家
@@ -216,6 +220,7 @@ class GameRoom:
             "scores": self.round_scores
         }
     
+    """待整顿重灾区"""
     def resolve_trick(self):
         """ 计算本轮胜者，设置下一轮先手玩家，并计算分数 """
         highest_card = max(
@@ -224,15 +229,17 @@ class GameRoom:
         )
         winner = highest_card[0]
         self.current_turn = self.players.index(winner)  # 设置下一轮先手玩家
+        for c in self.trick:
+            players[winner].get_scores.append(c[1])
 
         points = 0
-        if self.rules.get('rule1'):
+        if self.enable_10:
             players[winner].double = 2 if any(card["suit"] == "♣️" and card["rank"] == 10 for _, card in self.trick) or players[winner].double == 2 else 1
-        if self.rules.get('rule2'):
+        if self.enable_J:
             points -= 13 if any(card["suit"] == "♦️" and card["rank"] == 11 for _, card in self.trick) else 0
 
         # 计算得分
-        points += sum(1 for _, card in self.trick if card["suit"] == "❤️")
+        points += sum(1 for _, card in self.trick if card["suit"] == "♥️")
         points += 13 if any(card["suit"] == "♠️" and card["rank"] == 12 for _, card in self.trick) else 0
         self.round_scores[winner] += points * players[winner].double
 
@@ -244,10 +251,39 @@ class GameRoom:
             asyncio.create_task(self.end_round())
 
     async def end_round(self):
+        moon = None
+        red = None
+        if self.enable_moon :
+            for player in self.players:
+                if sum(c['suit'] == "♥️" for c in players[player].get_scores) == 13 and any(c['suit'] == "♠️" and c['rank'] == 12 for c in players[player].get_scores):
+                    moon = player
+                    break
+        if not moon and self.enable_red:
+            for player in self.players:
+                if sum(c['suit'] == "♥️" for c in players[player].get_scores) == 13:
+                    red = player
+                    self.round_scores[player] -= 26 * players[player].double
+                    break
+
+        if moon:
+            for player in self.players:
+                if player != moon:
+                    self.round_scores[player] += 26 * players[player].double
+                else:
+                    self.round_scores[player] = -13 * players[player].double if any(c['suit'] == "♦️" and c['rank'] == 11 for c in players[player].get_scores) else 0
+
         self.total_scores = {p: self.total_scores[p] + self.round_scores[p] for p in self.players}
+
+        if moon:
+            msg = f"Round ended, {moon} shot the moon!"
+        elif red:
+            msg = f"Round ended, {red} took all hearts!"
+        else:
+            msg = "Round ended."
+
         for player in self.players:
             await players[player].send_message({
-                "message": "Round ended",
+                "message": msg,
                 "total_scores": self.total_scores,
                 "round_scores": self.round_scores
             })
