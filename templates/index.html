@@ -10,9 +10,7 @@
         let ws;
         let hand = [];
         let passSelectedCards = [];
-        const API_BASE = "http://localhost:8000"; 
-        // const API_BASE = "http://10.192.222.225:8000";  
-
+        const API_BASE = "localhost:8000";  
 
         function togglePassSelect(card, btn) {
             const index = passSelectedCards.findIndex(c => c.rank === card.rank && c.suit === card.suit);
@@ -80,7 +78,7 @@
                 rule5: document.getElementById("rule5").checked,
             };
 
-            let response = await fetch(`${API_BASE}/create_room?player_id=${playerId}`, { 
+            let response = await fetch(`http://${API_BASE}/create_room?player_id=${playerId}`, { 
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ rules })
@@ -108,7 +106,7 @@
                 return;
             }
             
-            let response = await fetch(`${API_BASE}/join_room/${roomId}?player_id=${playerId}`, { method: "POST" });
+            let response = await fetch(`http://${API_BASE}/join_room/${roomId}?player_id=${playerId}`, { method: "POST" });
             let data = await response.json();
             if (data.error) {
                 alert(data.error);
@@ -124,7 +122,7 @@
         }
 
         function connectWebSocket() {
-            ws = new WebSocket(`${API_BASE}/ws/${roomId}/${playerId}`);
+            ws = new WebSocket(`ws://${API_BASE}/ws/${roomId}/${playerId}`);
             
             ws.onmessage = function(event) {
                 let data = JSON.parse(event.data);
@@ -140,6 +138,10 @@
                         updateScoreboard(data.scores);
                         document.getElementById("scoreboard").style.display = "block";
                     }
+                    if (data.tot_scores) {
+                        updateTotScoreboard(data.tot_scores);
+                        document.getElementById("tot_scoreboard").style.display = "block";
+                    } 
                 } else if (data.message === "Card played") {
                     if (data.error) {
                         alert(data.error);
@@ -152,6 +154,14 @@
                     // 更新记分板
                     if (data.scores) {
                        updateScoreboard(data.scores);
+                    }
+                    if (data.tot_scores) {
+                        updateTotScoreboard(data.tot_scores);
+                        document.getElementById("tot_scoreboard").style.display = "block";
+                    }
+                    // 显示当前的花色
+                    if (data.current_suit) {
+                        document.getElementById("current_suit_display").innerText = `当前花色: ${data.current_suit}`;
                     }
                 } else if (data.message === "Pass cards") {
                     hand = data.hand;
@@ -184,7 +194,26 @@
                     cell2.textContent = score;
                 });
             }
+                        // 更新记分板的函数
+            function updateTotScoreboard(scores) {
+                const table = document.getElementById("tot_score_table");
+                table.innerHTML = `
+                    <tr>
+                        <th>玩家</th>
+                        <th>得分</th>
+                    </tr>
+                `;
+                Object.entries(scores).forEach(([id, score]) => {
+                    let row = table.insertRow();
+                    let cell1 = row.insertCell(0);
+                    let cell2 = row.insertCell(1);
+                    cell1.textContent = id;
+                    cell2.textContent = score;
+                });
+            }
         }
+
+
 
         // 更新整个提示信息
         function updateChatBox(data) {
@@ -305,9 +334,19 @@
             <button onclick="confirmPassCards()">确认传牌</button>
         </div>
         <div id="chat_box"></div>
+        <div id="current_suit_display" style="font-size: 18px; font-weight: bold; margin-top: 10px;"></div>
         <div id="scoreboard" style="display:none;">
-            <h3>记分板</h3>
+            <h3>本局得分</h3>
             <table border="1" id="score_table">
+                <tr>
+                    <th>玩家</th>
+                    <th>得分</th>
+                </tr>
+            </table>
+        </div>
+        <div id="tot_scoreboard" style="display:none;">
+            <h3>总分</h3>
+            <table border="1" id="tot_score_table">
                 <tr>
                     <th>玩家</th>
                     <th>得分</th>

@@ -40,7 +40,7 @@ class GameRoom:
         self.deck = []
         self.hands = {}
         # self.rules = rules
-        self.counter = 0 
+        self.counter = 1 
         self.enable_pass_cards = rules.get('rule5')
         self.enable_moon = rules.get('rule4')
         self.enable_red = rules.get('rule3')
@@ -55,6 +55,11 @@ class GameRoom:
         self.trick_suit = None  # 当前回合的花色
         self.game_started = False
         self.hearts_broken = False  # 是否已经有人出过♥️
+
+    def remove_player(self, player_id):
+        self.players.remove(player_id)
+        self.total_scores.pop(player_id)
+        self.round_scores.pop(player_id)
 
     def validate_play(self, player_id, card):
         """ 检查玩家的出牌是否合法 """
@@ -72,6 +77,11 @@ class GameRoom:
             if card["rank"] != 2 or card["suit"] != "♣️":
                 return {"error": "The first move must be the 2 of ♣️"}
         
+         # 第一轮不能出♥️，除非手中只有♥️
+        if sum(len(hand) for hand in self.hands.values()) > 48 and card["suit"] == "♥️":
+            if any(c["suit"] != "♥️" for c in self.hands[player_id]):
+                return {"error": "You cannot play ♥️ on the first round"}
+
         # 如果是本轮的第一张牌
         if len(self.trick) == 0:
             # 如果♥️未被破坏，不能率先出♥️，除非玩家只有♥️
@@ -122,22 +132,30 @@ class GameRoom:
                 self.hands[player],
                 key=lambda card: ({"♠️": 0, "♥️": 1, "♣️": 2, "♦️": 3}[card["suit"]], card["rank"])
         )
+            
+                # 设定第一轮的先手玩家（持有♣️2）
+        for player in self.players:
+            if any(card["rank"] == 2 and card["suit"] == "♣️" for card in self.hands[player]):
+                self.current_turn = self.players.index(player)
+                break
 
 
         for player in self.players:
-            await players[player].send_message({
-                "message": f"Game started",
-                "hand": self.hands[player], # 要修改成加上收到的牌以后的
-                "first_player": self.players[self.current_turn],
-                "get_cards": get_cards[player],
-                "scores": self.total_scores
-            })
+            if len(get_cards[player]) > 0:
+                await players[player].send_message({
+                    "message": f"Game started",
+                    "hand": self.hands[player], 
+                    "first_player": self.players[self.current_turn],
+                    "get_cards": get_cards[player],
+                    "scores": self.round_scores,
+                    "tot_scores": self.total_scores
+                })
     
     async def deal_cards(self):
         """ 仅在游戏开始时调用一次，发 13 张牌 """
         self.deck = self.generate_deck()
-        self.counter += 1
         self.started = False
+
         for i, player in enumerate(self.players):
             self.hands[player] = sorted(
                 self.deck[i::4],
@@ -156,6 +174,7 @@ class GameRoom:
                 self.current_turn = self.players.index(player)
                 break
 
+        self.finish_pass = {}
         self.trick = []
         self.trick_suit = None
         self.hearts_broken = False
@@ -173,7 +192,8 @@ class GameRoom:
                     "message": f"Game started",
                     "hand": self.hands[player],
                     "first_player": self.players[self.current_turn],
-                    "scores": self.total_scores
+                    "scores": self.round_scores,
+                    "tot_scores": self.total_scores
                 })
 
 
@@ -217,6 +237,7 @@ class GameRoom:
             "player": player_id,
             "card": card,
             "next_player": self.players[self.current_turn],
+            "current_suit": self.trick_suit,
             "scores": self.round_scores
         }
     
@@ -234,7 +255,9 @@ class GameRoom:
 
         points = 0
         if self.enable_10:
-            players[winner].double = 2 if any(card["suit"] == "♣️" and card["rank"] == 10 for _, card in self.trick) or players[winner].double == 2 else 1
+            if any(card["suit"] == "♣️" and card["rank"] == 10 for _, card in self.trick) or players[winner].double == 2:   
+                self.round_scores[winner] *= 2
+                players[winner].double = 2 
         if self.enable_J:
             points -= 13 if any(card["suit"] == "♦️" and card["rank"] == 11 for _, card in self.trick) else 0
 
@@ -251,6 +274,7 @@ class GameRoom:
             asyncio.create_task(self.end_round())
 
     async def end_round(self):
+        self.counter += 1
         moon = None
         red = None
         if self.enable_moon :
@@ -284,8 +308,8 @@ class GameRoom:
         for player in self.players:
             await players[player].send_message({
                 "message": msg,
-                "total_scores": self.total_scores,
-                "round_scores": self.round_scores
+                "tot_scores": self.total_scores,
+                "scores": self.round_scores
             })
         if max(self.total_scores.values()) >= 50:
             await self.reset_game()
@@ -311,7 +335,7 @@ class GameRoom:
         for player in self.players:
             asyncio.create_task(players[player].send_message({
                 "message": "Game over",
-                "scores": self.total_scores,
+                "tot_scores": self.total_scores,
                 "winner": winner
             }))
 
@@ -319,9 +343,9 @@ class GameRoom:
         del rooms[self.room_id]
 
 def create_game_room(creator_id, rules):
-    room_id = '1111' # ''.join(random.choices(string.digits, k=4))
-    # while room_id in rooms:
-    #     room_id = ''.join(random.choices(string.digits, k=4))
+    room_id = ''.join(random.choices(string.digits, k=4))
+    while room_id in rooms:
+        room_id = ''.join(random.choices(string.digits, k=4))
     rooms[room_id] = GameRoom(room_id, rules)
     return room_id
 
@@ -388,7 +412,9 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, player_id: str)
                 if await room.pass_card(player_id, data['cards']) == 4:
                     await room.start_game()
     except WebSocketDisconnect:
-        room.players.remove(player_id)
+        print(f'{player_id} closed!!!!')
+        # room.players.remove(player_id)
+        room.remove_player(player_id)
         del players[player_id]
         if not room.players:
             del rooms[room_id]
