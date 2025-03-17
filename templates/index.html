@@ -12,6 +12,21 @@
         let passSelectedCards = [];
         const API_BASE = "localhost:8000";  
 
+        function updatePlayerPositions(players) {
+            let playerIndex = players.indexOf(playerId);
+            let orderedPlayers = Array(4).fill(null);
+            
+            orderedPlayers[0] = players[playerIndex];
+            orderedPlayers[1] = players[(playerIndex + 1) % 4]
+            orderedPlayers[2] = players[(playerIndex + 2) % 4]
+            orderedPlayers[3] = players[(playerIndex + 3) % 4]
+            
+            document.getElementById("seat_south").innerText = orderedPlayers[0] ? orderedPlayers[0]: "";
+            document.getElementById("seat_east").innerText = orderedPlayers[1] ? orderedPlayers[1]: "";
+            document.getElementById("seat_north").innerText = orderedPlayers[2] ? orderedPlayers[2]: "";
+            document.getElementById("seat_west").innerText = orderedPlayers[3] ? orderedPlayers[3]: "";
+        }
+
         function togglePassSelect(card, btn) {
             const index = passSelectedCards.findIndex(c => c.rank === card.rank && c.suit === card.suit);
             if (index >= 0) {
@@ -126,7 +141,12 @@
             
             ws.onmessage = function(event) {
                 let data = JSON.parse(event.data);
-                updateChatBox(data);
+                if (data.message)
+                    updateChatBox(data);
+
+                if (data.player_change) {
+                    updatePlayerPositions(data.players);
+                }
                 
                 if (data.message === "Game started") {
                     console.log("游戏开始，收到手牌:", data.hand);
@@ -302,6 +322,31 @@
             font-size: 16px;
             font-weight: bold;
         }
+        #player_positions {
+            width: 200px;
+            height: 200px;
+            border: 2px solid black;
+            border-radius: 50%;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #f1f1f1;
+        }
+        .seat {
+            position: absolute;
+            width: 40px;
+            height: 30px;
+            text-align: center;
+            font-weight: bold;
+            background-color: white;
+            border: 1px solid black;
+            padding: 5px;
+        }
+        #seat_south { bottom: 10px; left: 50%; transform: translateX(-50%); }
+        #seat_north { top: 10px; left: 50%; transform: translateX(-50%); }
+        #seat_west { left: 10px; top: 50%; transform: translateY(-50%); }
+        #seat_east { right: 10px; top: 50%; transform: translateY(-50%); }
     </style>
 </head>
 <body>
@@ -327,6 +372,12 @@
     
     <div id="game_area" style="display:none;">
         <h2>游戏进行中</h2>
+        <div id="player_positions">
+            <div id="seat_north" class="seat"></div>
+            <div id="seat_west" class="seat"></div>
+            <div id="seat_south" class="seat"></div>
+            <div id="seat_east" class="seat"></div>
+        </div>
         <div id="hand"></div>
         <div id="pass_area" style="display:none;">
             <h3>选择传递的三张手牌:</h3>

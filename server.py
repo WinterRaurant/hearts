@@ -56,10 +56,18 @@ class GameRoom:
         self.game_started = False
         self.hearts_broken = False  # 是否已经有人出过♥️
 
+    async def notice_player_list(self):
+        for player in self.players:
+            await players[player].send_message({
+                "player_change": True,
+                "players": self.players
+            })
+
     def remove_player(self, player_id):
         self.players.remove(player_id)
-        self.total_scores.pop(player_id)
-        self.round_scores.pop(player_id)
+        print(self.total_scores)
+        self.total_scores.pop(player_id, 0)
+        self.round_scores.pop(player_id, 0)
 
     def validate_play(self, player_id, card):
         """ 检查玩家的出牌是否合法 """
@@ -392,6 +400,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, player_id: str)
 
     # 绑定 WebSocket 连接
     players[player_id].websocket = websocket
+    await room.notice_player_list()
 
     # 检查是否所有玩家都已连接
     if len(room.players) == 4 and all(players[p].websocket is not None for p in room.players):
@@ -418,4 +427,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, player_id: str)
         del players[player_id]
         if not room.players:
             del rooms[room_id]
+        else:
+            await room.notice_player_list()
         await websocket.close()
